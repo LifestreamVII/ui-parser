@@ -1,0 +1,11 @@
+# Python Virtual Environments
+
+.venv-*/
+
+# Weights
+
+weights/omniparser/
+
+# YOLOv9 Framework
+
+native-yolo/

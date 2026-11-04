@@ -1,63 +1,55 @@
 from __future__ import annotations
 
 import random
-import shutil
-import subprocess
 from pathlib import Path
+from typing import Tuple
 
+import av
 import cv2
-
+import numpy as np
 
 # Configure these globals before running the script.
 input = "input.mp4"
-folder = "frames"
-discarded = "discarded"
+folder = "frames_6"
+discarded = "discarded_6"
 prefixed = "frame_"
-min_interval = 1.0
-max_interval = 5.0
-threshold_min = 0.80
-threshold_max = 0.98
+min_interval = 4.0
+max_interval = 13.0
+threshold_min = 0.51
+threshold_max = 0.8
+
+C1: float = 6.5025
+C2: float = 58.5225
 
 
-def video_duration(filename: str) -> float:
-	result = subprocess.run(
-		[
-			"ffprobe", "-v", "error", "-show_entries", "format=duration",
-			"-of", "default=noprint_wrappers=1:nokey=1", filename,
-		],
-		check=True,
-		capture_output=True,
-		text=True,
-	)
-	return float(result.stdout.strip())
+def extract_frame(container: av.container.InputContainer, stream: av.video.stream.VideoStream, timestamp: float) -> np.ndarray | None:
+	"""Seek to timestamp and decode frame using PyAV (supports AV1, H.264, etc.)."""
+	target_pts = int(timestamp / stream.time_base)
+	container.seek(target_pts, any_frame=False, backward=True, stream=stream)
+	for frame in container.decode(stream):
+		if frame.pts is not None and frame.pts >= target_pts:
+			return frame.to_ndarray(format="bgr24")
+	return None
 
 
-def extract_frame(filename: str, timestamp: float, output: Path) -> None:
-	subprocess.run(
-		[
-			"ffmpeg", "-y", "-ss", str(timestamp), "-i", filename,
-			"-frames:v", "1", "-q:v", "2", str(output),
-		],
-		check=True,
-		stdout=subprocess.DEVNULL,
-		stderr=subprocess.DEVNULL,
-	)
+def compute_frame_stats(frame_gray: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+	"""Compute mean and variance on a float grayscale image."""
+	mean = cv2.GaussianBlur(frame_gray, (11, 11), 1.5)
+	variance = cv2.GaussianBlur(frame_gray * frame_gray, (11, 11), 1.5) - mean * mean
+	return mean, variance
 
 
-def ssim(first, second) -> float:
-	# SSIM is computed on grayscale images with an 11x11 Gaussian window.
-	first = cv2.cvtColor(first, cv2.COLOR_BGR2GRAY)
-	second = cv2.cvtColor(second, cv2.COLOR_BGR2GRAY)
-	c1, c2 = 6.5025, 58.5225
-	first = first.astype("float64")
-	second = second.astype("float64")
-	mean1 = cv2.GaussianBlur(first, (11, 11), 1.5)
-	mean2 = cv2.GaussianBlur(second, (11, 11), 1.5)
-	variance1 = cv2.GaussianBlur(first * first, (11, 11), 1.5) - mean1 * mean1
-	variance2 = cv2.GaussianBlur(second * second, (11, 11), 1.5) - mean2 * mean2
-	covariance = cv2.GaussianBlur(first * second, (11, 11), 1.5) - mean1 * mean2
-	value = ((2 * mean1 * mean2 + c1) * (2 * covariance + c2)) / (
-		(mean1 * mean1 + mean2 * mean2 + c1) * (variance1 + variance2 + c2)
+def fast_ssim(
+	first_gray: np.ndarray,
+	mean1: np.ndarray,
+	variance1: np.ndarray,
+	second_gray: np.ndarray,
+	mean2: np.ndarray,
+	variance2: np.ndarray,
+) -> float:
+	covariance = cv2.GaussianBlur(first_gray * second_gray, (11, 11), 1.5) - mean1 * mean2
+	value = ((2 * mean1 * mean2 + C1) * (2 * covariance + C2)) / (
+		(mean1 * mean1 + mean2 * mean2 + C1) * (variance1 + variance2 + C2)
 	)
 	return float(value.mean())
 
@@ -68,30 +60,72 @@ def main() -> None:
 	output_dir.mkdir(parents=True, exist_ok=True)
 	discarded_dir.mkdir(parents=True, exist_ok=True)
 
-	duration = video_duration(input)
+	container = av.open(input)
+	stream = container.streams.video[0]
+	duration = float(container.duration / 1_000_000) if container.duration else 0.0
+
 	timestamp = 0.0
-	previous = None
 	index = 0
 
-	while timestamp < duration:
-		frame_path = output_dir / f"{prefixed}{index:06d}.jpg"
-		extract_frame(input, timestamp, frame_path)
-		current = cv2.imread(str(frame_path))
-		if current is None:
-			frame_path.unlink(missing_ok=True)
-			break
+	first_gray = None
+	ff_mean = None
+	ff_variance = None
 
-		if previous is not None:
-			if previous.shape != current.shape:
-				current = cv2.resize(current, (previous.shape[1], previous.shape[0]))
-			similarity = ssim(previous, current)
-			# Discard frames outside the accepted SSIM range.
-			if similarity < threshold_min or similarity > threshold_max:
-				shutil.move(str(frame_path), discarded_dir / frame_path.name)
+	prev_gray = None
+	prev_mean = None
+	prev_variance = None
 
-		previous = current
-		index += 1
-		timestamp += random.uniform(min_interval, max_interval)
+	try:
+		while timestamp < duration:
+			current = extract_frame(container, stream, timestamp)
+			if current is None:
+				break
+
+			frame_path = output_dir / f"{prefixed}{index:06d}.jpg"
+
+			# Convert current to float32 grayscale and compute stats once
+			curr_gray = cv2.cvtColor(current, cv2.COLOR_BGR2GRAY).astype(np.float32)
+			curr_mean, curr_variance = compute_frame_stats(curr_gray)
+
+			if index == 0:
+				first_gray = curr_gray
+				ff_mean = curr_mean
+				ff_variance = curr_variance
+				cv2.imwrite(str(output_dir / frame_path.name), current)
+			else:
+				if prev_gray.shape != curr_gray.shape:
+					curr_gray = cv2.resize(curr_gray, (prev_gray.shape[1], prev_gray.shape[0]))
+					curr_mean, curr_variance = compute_frame_stats(curr_gray)
+
+				similarity = fast_ssim(
+					prev_gray, prev_mean, prev_variance,
+					curr_gray, curr_mean, curr_variance,
+				)
+				ff_similarity = fast_ssim(
+					first_gray, ff_mean, ff_variance,
+					curr_gray, curr_mean, curr_variance,
+				)
+
+				print(f"Frame {index:06d}: SSIM with previous = {similarity:.4f}, SSIM with first = {ff_similarity:.4f}")
+				# Discard frames outside the accepted SSIM range
+				if (
+					(similarity < threshold_min or similarity > threshold_max) or 
+					(ff_similarity < threshold_min or ff_similarity > threshold_max)
+				):
+					print(f"Frame {index:06d} discarded.")
+					cv2.imwrite(str(discarded_dir / frame_path.name), current)
+				else:
+					cv2.imwrite(str(output_dir / frame_path.name), current)
+				print("--------------------------------")
+
+			prev_gray = curr_gray
+			prev_mean = curr_mean
+			prev_variance = curr_variance
+
+			index += 1
+			timestamp += random.uniform(min_interval, max_interval)
+	finally:
+		container.close()
 
 
 if __name__ == "__main__":

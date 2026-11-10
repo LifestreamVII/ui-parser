@@ -186,7 +186,13 @@ class Detector:
         image_cv = cv2.imread(image_path)
         if image_cv is None:
             raise ValueError(f"Failed to read image from {image_path}")
-        for x1, y1, x2, y2, score in map(lambda x: (int(x["x1"]), int(x["y1"]), int(x["x2"]), int(x["y2"]), x["score"]), self.detections):
+        for x1, y1, x2, y2, score in map(lambda x: (
+            int(np.round(x["x1"])),
+            int(np.round(x["x2"])),
+            int(np.round(x["y1"])),
+            int(np.round(x["y2"])),
+            x["score"]),
+            self.detections):
             cv2.rectangle(
                 image_cv,
                 (x1, y1),

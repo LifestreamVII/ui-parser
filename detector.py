@@ -75,7 +75,17 @@ class Detector:
             boxes_np = boxes.cpu().numpy()
             scores_np = scores.cpu().numpy()
             print(f"Detected {len(boxes_np)} interactable elements (conf > {self.conf_threshold})")
-            self.detections = zip(boxes_np, scores_np)
+            self.detections = [
+                {
+                    "kind": "CONTROL",
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
+                    "score": s
+                }
+                for (x1, x2, y1, y2), s in zip(boxes_np, scores_np)
+            ]
         except:
             raise Exception("Failed to run inference")
 
@@ -176,9 +186,14 @@ class Detector:
         image_cv = cv2.imread(image_path)
         if image_cv is None:
             raise ValueError(f"Failed to read image from {image_path}")
-        for box, score in self.detections:
-            x1, y1, x2, y2 = map(int, np.round(box))
-            cv2.rectangle(image_cv, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        for x1, y1, x2, y2, score in map(lambda x: (int(x["x1"]), int(x["y1"]), int(x["x2"]), int(x["y2"]), x["score"]), self.detections):
+            cv2.rectangle(
+                image_cv,
+                (x1, y1),
+                (x2, y2),
+                (0, 255, 0),
+                2
+            )
             label = f"{score:.2f}"
             text_y = max(y1 - 4, 12)
             cv2.putText(image_cv, label, (x1, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)

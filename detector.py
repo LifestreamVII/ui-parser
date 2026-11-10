@@ -22,7 +22,6 @@ class Detector:
          self.image_path = None
          self.size = None
          self.result = None
-         self.detections = None
          self.load_model()
 
     def load_model(self) -> None:
@@ -58,7 +57,7 @@ class Detector:
         except:
             raise Exception(f"Failed to load image from {image_path}")
 
-    def detect_objects(self) -> None:
+    def detect_objects(self) -> List[Dict[str, float]]:
         try:
             t0 = time.perf_counter() # Start timer
             width, height = self.size
@@ -75,17 +74,18 @@ class Detector:
             boxes_np = boxes.cpu().numpy()
             scores_np = scores.cpu().numpy()
             print(f"Detected {len(boxes_np)} interactable elements (conf > {self.conf_threshold})")
-            self.detections = [
+            detections = [
                 {
                     "kind": "CONTROL",
-                    "x1": x1,
-                    "y1": y1,
-                    "x2": x2,
-                    "y2": y2,
-                    "score": s
+                    "x1": float(x1),
+                    "y1": float(y1),
+                    "x2": float(x2),
+                    "y2": float(y2),
+                    "score": float(s)
                 }
-                for (x1, x2, y1, y2), s in zip(boxes_np, scores_np)
+                for (x1, y1, x2, y2), s in zip(boxes_np, scores_np)
             ]
+            return detections
         except:
             raise Exception("Failed to run inference")
 
@@ -178,26 +178,28 @@ class Detector:
 
         return boxes, scores
 
-    def draw_detections(self, output: str) -> None:
-        if not self.detections:
+    @staticmethod
+    def draw_detections(detections: List[Dict[str, float]], image_path: str, output: Path) -> None:
+        if detections is None or len(detections) == 0:
             raise ValueError("No detections to draw.")
         output = Path(output)
-        image_path = Path(self.image_path)
+        image_path = Path(image_path)
         image_cv = cv2.imread(image_path)
         if image_cv is None:
             raise ValueError(f"Failed to read image from {image_path}")
-        for x1, y1, x2, y2, score in map(lambda x: (
-            int(np.round(x["x1"])),
-            int(np.round(x["x2"])),
-            int(np.round(x["y1"])),
-            int(np.round(x["y2"])),
-            x["score"]),
-            self.detections):
+        for x1, x2, y1, y2, score, kind in map(lambda x: (
+            int(x["x1"]),
+            int(x["x2"]),
+            int(x["y1"]),
+            int(x["y2"]),
+            x["score"],
+            x["kind"]),
+            detections):
             cv2.rectangle(
                 image_cv,
                 (x1, y1),
                 (x2, y2),
-                (0, 255, 0),
+                (0, 255, 0) if kind == "CONTROL" else (255, 0, 0),
                 2
             )
             label = f"{score:.2f}"

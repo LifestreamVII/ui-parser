@@ -86,8 +86,8 @@ class Detector:
                 for (x1, y1, x2, y2), s in zip(boxes_np, scores_np)
             ]
             return detections
-        except:
-            raise Exception("Failed to run inference")
+        except Exception as e:
+            raise RuntimeError(f"Error during inference: {e}") from e
 
     def _letterbox(self, image: Image.Image, target_size: int = 0) -> tuple[torch.Tensor, float]:
         # Resizing ------------------------------------------------------

@@ -31,8 +31,8 @@ ocr = RapidOCR()
 
 def main():
     args = parser.parse_args()
-    output_image = args.out + "/debug_annotated.png"
-    output_json = args.out + "dom.json"
+    output_image = Path(args.out + "debug_annotated.png")
+    output_json = Path(args.out + "dom.json")
     detector = Detector(MODEL_PATH, IMGSZ, STRIDES, args.conf, IOU_THRESHOLD)
     detector.load_image(args.image)
     control_detections = detector.detect_objects()
@@ -50,10 +50,13 @@ def main():
             "x2": n["x2"],
             "y1": n["y1"],
             "y2": n["y2"],
+            "cx": get_cx(n),
+            "cy": get_cy(n),
             "score": n["score"],
             "kind": n["kind"]
         })
     ocr_nodes = ocr_text(args.image, args.ocr_conf)
+    pairs = pair_nodes(Path(args.out) / "crops", ocr_nodes, nodes, args.image)
     detections = nodes + ocr_nodes
     detector.draw_detections(
         detections,
@@ -64,7 +67,7 @@ def main():
         "image": args.image,
         "width": w,
         "height": h,
-        "nodes": detections,
+        "nodes": pairs + ocr_nodes,
     }
     j = json.dumps(obj, indent=4)
     with open(output_json, "w") as f:
@@ -91,10 +94,67 @@ def ocr_text(image_path, conf: float) -> list[dict]:
             ocr_nodes.append({
                 "kind": "TEXT", "label": text, "id": node_id,
                 "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                "cx": get_cx({
+                       "x1": x1,
+                       "x2": x2
+                }),
+                "cy": get_cy({
+                    "y1": y1,
+                    "y2": y2
+                }),
                 "score": score
             })
     return ocr_nodes
 
+def pair_nodes(out_path, ocr_nodes, control_nodes, image):
+    nodes = []
+    for control in control_nodes:
+        best_cx = None
+        best = None
+        control_w = control["x2"] - control["x1"]
+        control_h = control["y2"] - control["y1"]
+        best_w, best_h = None, None
+        for ocr in ocr_nodes:
+            if abs(control["cy"] - ocr["cy"]) < 20:
+                # same row
+                gap_x = min(
+                    abs(control["x1"] - ocr["x2"]),
+                    abs(ocr["x1"] - control["x2"])
+                )
+                if best_cx is None or gap_x < best_cx:
+                    best_cx = gap_x
+                    best = ocr
+        if best:
+            nodes.append({**control, "crop_path": f"crops/{control['id']}.png", "label": best["label"]})
+        else:
+            nodes.append({**control, "crop_path": f"crops/{control['id']}.png"})
+            best = control
+        best_w = best["x2"] - best["x1"]
+        best_h = best["y2"] - best["y1"]
+        union_box = (min(control["x1"], best["x1"]), min(control["y1"], best["y1"]),
+            max(control["x2"], best["x2"]), max(control["y2"], best["y2"]))
+        save_crops(
+            out_path,
+            image,
+            control["id"],
+            union_box
+        )
+    return nodes
+
+def save_crops(out_path, image, id, region):
+    img_input = Path(image)
+    img = Image.open(img_input)
+    W, H = img.size
+    left, top, right, bottom = region
+    region = (max(0, left - 8), max(0, top - 8),
+        min(W, right + 8), min(H, bottom + 8))
+    img = img.crop(region).save(Path(out_path) / f"{id}.png")
+
+def get_cx(node):
+    return node["x1"] + (node["x2"] - node["x1"]) / 2
+
+def get_cy(node):
+    return node["y1"] + (node["y2"] - node["y1"]) / 2
 
 if __name__ == "__main__":
     main()

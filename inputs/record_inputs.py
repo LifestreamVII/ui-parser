@@ -3,19 +3,18 @@ from pynput.mouse import Listener
 import json
 from PIL import Image
 import time
+import pyautogui
 
 parser = argparse.ArgumentParser(
     description="Record mouse movements and clicks."
 )
-parser.add_argument("--retina", default=False, action=argparse.BooleanOptionalAction)
+# parser.add_argument("--retina", default=False, action=argparse.BooleanOptionalAction)
 
 class Recorder:
-    def __init__(self, width, height, nodes, retina):
+    def __init__(self, scale, nodes):
         self.clicks = []
-        self.width = width
-        self.height = height
+        self.scale = scale
         self.nodes = nodes
-        self.retina = retina
         self.sort_nodes_by_asc_area()
         self.listener = Listener(on_move=self.on_move, on_click=self.on_click)
 
@@ -25,16 +24,12 @@ class Recorder:
             key=lambda n:
             (n["x2"] - n["x1"]) * (n["y2"] - n["y1"]))
 
-    def find_node(self, x, y):
+    def find_node(self, x_screen, y_screen):
         """Find the node for which the bounding box contains x,y"""
-        if self.retina:
-            screen_width = 1920
-            factor = self.width / screen_width
-            x = int(x * factor)
-            y = int(y * factor)
-        print(f"Click pressed at ({x}, {y})")
+        x_dom = int(x_screen * self.scale)
+        y_dom = int(y_screen * self.scale)
         for n in self.nodes:
-            if n["x1"] <= x <= n["x2"] and n["y1"] <= y <= n["y2"]:
+            if n["x1"] <= x_dom <= n["x2"] and n["y1"] <= y_dom <= n["y2"]:
                 # Expects first hit to have the smallest area (sorted)
                 return n
         return None
@@ -42,14 +37,22 @@ class Recorder:
     def on_move(self, x, y):
         print(f"Mouse moved to ({x}, {y})")
 
-    def on_click(self, x, y, button, pressed):
+    def on_click(self, x_screen, y_screen, button, pressed):
         """Only record ßon press on V1"""
         if pressed:
-            node = self.find_node(x, y)
+            node = self.find_node(x_screen, y_screen)
             if node:
                 print(f"Found node: {node}")
+                x_dom = int(x_screen * self.scale)
+                y_dom = int(y_screen * self.scale)
                 self.clicks.append(
-                    {"node": node, "x": x, "y": y, "action": "click"}
+                    {"node": node,
+                    "x_screen": x_screen,
+                    "y_screen": y_screen,
+                    "x_dom": x_dom,
+                    "y_dom": y_dom,
+                    "action": "click",
+                    }
                 )
     
     def save_trace(self):
@@ -59,16 +62,15 @@ class Recorder:
 def main():
     args = parser.parse_args()
     dom = None
-    retina = False
-    if args.retina:
-        retina = True
+    screen_w, screen_h = pyautogui.size()
     with open('dom/dom.json') as f:
         dom = json.load(f)
     if dom is None:
         raise Exception("dom.json not loaded")    
     if dom["nodes"] is None or len(dom["nodes"]) == 0:
         raise Exception("No nodes found in dom.json")
-    recorder = Recorder(dom["width"], dom["height"], dom["nodes"], retina)    
+    scale = dom["width"] / screen_w
+    recorder = Recorder(scale, dom["nodes"])
     # Start the listener non-blockingly
     recorder.listener.start()
     try:

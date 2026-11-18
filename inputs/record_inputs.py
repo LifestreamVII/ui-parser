@@ -2,7 +2,7 @@ import argparse
 from pynput.mouse import Listener
 import json
 from PIL import Image
-
+import time
 
 parser = argparse.ArgumentParser(
     description="Record mouse movements and clicks."
@@ -68,13 +68,17 @@ def main():
         raise Exception("dom.json not loaded")    
     if dom["nodes"] is None or len(dom["nodes"]) == 0:
         raise Exception("No nodes found in dom.json")
-    recorder = Recorder(dom["width"], dom["height"], dom["nodes"], retina)
+    recorder = Recorder(dom["width"], dom["height"], dom["nodes"], retina)    
+    # Start the listener non-blockingly
+    recorder.listener.start()
     try:
-        with recorder.listener as listener:
-            listener.join()
+        # Periodically join with a timeout so Windows can process SIGINT (Ctrl+C)
+        while recorder.listener.is_alive():
+            recorder.listener.join(timeout=0.5)
     except KeyboardInterrupt:
-        print("Recording stopped by user")
+        print("\nRecording stopped by user")
     finally:
+        recorder.listener.stop()
         recorder.save_trace()
 
 if __name__ == "__main__":

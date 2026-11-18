@@ -62,20 +62,20 @@ def main():
     retina = False
     if args.retina:
         retina = True
-        with open('dom/dom.json') as f:
-            dom = json.load(f)
-        if dom is None:
-            raise Exception("dom.json not loaded")    
-        if dom["nodes"] is None or len(dom["nodes"]) == 0:
-            raise Exception("No nodes found in dom.json")
-        recorder = Recorder(dom["width"], dom["height"], dom["nodes"], retina)
-        try:
-            with recorder.listener as listener:
-                listener.join()
-        except KeyboardInterrupt:
-            print("Recording stopped by user")
-        finally:
-            recorder.save_trace()
+    with open('dom/dom.json') as f:
+        dom = json.load(f)
+    if dom is None:
+        raise Exception("dom.json not loaded")    
+    if dom["nodes"] is None or len(dom["nodes"]) == 0:
+        raise Exception("No nodes found in dom.json")
+    recorder = Recorder(dom["width"], dom["height"], dom["nodes"], retina)
+    try:
+        with recorder.listener as listener:
+            listener.join()
+    except KeyboardInterrupt:
+        print("Recording stopped by user")
+    finally:
+        recorder.save_trace()
 
 if __name__ == "__main__":
     main()
